@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="refresh" content="1" />
+    <title>FireWatch Location Output</title>
+    <style>
+        body {
+            margin: 0;
+            min-height: 100vh;
+            display: grid;
+            place-items: center;
+            font-family: Segoe UI, Tahoma, sans-serif;
+            background: linear-gradient(120deg, #eef6ff, #f4fff1);
+            color: #0f172a;
+        }
+        .card {
+            width: min(92vw, 760px);
+            border-radius: 18px;
+            background: #ffffff;
+            padding: 28px;
+            box-shadow: 0 16px 40px rgba(15, 23, 42, 0.12);
+            text-align: center;
+        }
+        .title {
+            margin: 0 0 12px;
+            font-size: 1.2rem;
+            color: #1e293b;
+        }
+        .location {
+            margin: 0;
+            font-size: clamp(1.8rem, 4vw, 2.8rem);
+            font-weight: 700;
+            color: #14532d;
+        }
+        .time {
+            margin-top: 14px;
+            font-size: 0.95rem;
+            color: #475569;
+        }
+    </style>
+</head>
+<body>
+    <section class="card">
+        <h1 class="title">Current Pointed Location</h1>
+        <p class="location">No region selected</p>
+        <p class="time">Last Update: 2026-04-05 03:29:03</p>
+    </section>
+</body>
+</html>

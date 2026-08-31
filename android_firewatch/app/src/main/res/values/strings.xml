@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">FireWatch Reporting App</string>
+    <!-- TODO: Add your default_web_client_id from Firebase Console google-services.json -->
+    <string name="default_web_client_id">27030757706-g3ph9et1en06oonio2duhkdugt6pjqr3.apps.googleusercontent.com</string>
+</resources>
