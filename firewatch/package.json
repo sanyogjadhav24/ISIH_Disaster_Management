@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "ingest-population": "node scripts/ingest-population-data.js"
+    "ingest-population": "node scripts/ingest-population-data.js",
+    "simulator": "node simulator/server.js"
   },
   "dependencies": {
     "@arcgis/core": "^4.34.8",
