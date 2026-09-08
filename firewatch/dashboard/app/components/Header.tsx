@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ShieldAlert, Radio, RefreshCw, Flame, AlertTriangle, Waves, Mountain, Activity } from 'lucide-react';
+import { ShieldAlert, Radio, RefreshCw, Flame, AlertTriangle, Waves, Mountain, Activity, PhoneCall } from 'lucide-react';
 
 export type HazardFilter = 'ALL' | 'FF' | 'GL' | 'FL' | 'LS';
 
@@ -139,6 +139,11 @@ export default function Header({
 
         {/* Right: Alarms counter & Refresh & Clock */}
         <div className="flex items-center gap-3 font-mono text-xs">
+          <span className="hidden xl:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-red-950/60 border border-red-500/40 text-red-300 text-[11px] font-semibold">
+            <PhoneCall className="h-3 w-3 text-red-400 animate-pulse" />
+            <span>SMS & CALL BROADCAST ARMED</span>
+          </span>
+
           {criticals > 0 && (
             <div className="flex items-center gap-1.5 px-2.5 py-1 bg-red-950/80 border border-red-500/50 rounded-lg text-red-300 animate-pulse">
               <span className="h-2 w-2 rounded-full bg-red-500" />

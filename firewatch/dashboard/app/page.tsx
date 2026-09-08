@@ -9,6 +9,7 @@ import EdgeQcInspector from './components/EdgeQcInspector';
 import IncidentQueue from './components/IncidentQueue';
 import TelemetryChart from './components/TelemetryChart';
 import NodeDetailModal from './components/NodeDetailModal';
+import EmergencyAlertPanel from './components/EmergencyAlertPanel';
 import { ShieldAlert, ExternalLink, HelpCircle } from 'lucide-react';
 
 export default function DashboardHome() {
@@ -138,6 +139,11 @@ export default function DashboardHome() {
               onSelectNodeById={handleSelectNodeById}
             />
           </div>
+        </div>
+
+        {/* Emergency SMS & Automated Voice Call Dispatch Center */}
+        <div>
+          <EmergencyAlertPanel />
         </div>
 
         {/* Hazard Telemetry Matrices (FG & FS) */}
