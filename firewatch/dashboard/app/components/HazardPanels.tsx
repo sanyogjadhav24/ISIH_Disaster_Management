@@ -149,8 +149,12 @@ export default function HazardPanels({
                   onClick={() => onSelectNode(node)}
                   className={`p-3.5 rounded-xl border transition-all cursor-pointer ${
                     isSelected
-                      ? 'bg-slate-800/90 border-cyan-500/70 shadow-lg shadow-cyan-950/30'
-                      : 'bg-slate-900/60 border-slate-800 hover:border-slate-700 hover:bg-slate-800/40'
+                      ? 'bg-slate-800/90 border-cyan-400 shadow-lg shadow-cyan-950/40'
+                      : isNodeActive
+                        ? (risk.level === 'CRITICAL'
+                            ? 'bg-red-950/20 border-red-500/70 shadow-md shadow-red-950/50 animate-pulse'
+                            : 'bg-slate-900/80 border-emerald-500/50 shadow-sm shadow-emerald-950/30 hover:border-emerald-400')
+                        : 'bg-slate-900/60 border-slate-800 hover:border-slate-700 hover:bg-slate-800/40'
                   }`}
                 >
                   {/* Card Header: Node ID, Status Badge, Risk Badge */}

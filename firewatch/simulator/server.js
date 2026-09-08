@@ -14,15 +14,36 @@ const dns = require('dns');
 const readline = require('readline');
 const { MongoClient } = require('mongodb');
 
+const fs = require('fs');
+const path = require('path');
+
+// Dynamically load environment variables from dashboard/.env.local if available
+try {
+  const envPath = path.resolve(__dirname, '../dashboard/.env.local');
+  if (fs.existsSync(envPath)) {
+    const lines = fs.readFileSync(envPath, 'utf8').split('\n');
+    for (const line of lines) {
+      const match = line.match(/^\s*([\w.-]+)\s*=\s*(.*)?\s*$/);
+      if (match) {
+        const key = match[1];
+        let val = (match[2] || '').trim();
+        if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+          val = val.slice(1, -1);
+        }
+        if (!process.env[key]) process.env[key] = val;
+      }
+    }
+  }
+} catch (e) {}
+
 // Resilient DNS resolution for MongoDB Atlas
 try {
   dns.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4']);
 } catch (e) {}
 
 const PORT = process.env.SIMULATOR_PORT || 4000;
-const MONGO_URI = process.env.MONGODB_URI || 
-  'mongodb://sanyogjadhav24_db_user:br4Pxa1Iaa2OFbRD@ac-ukercew-shard-00-00.tsmkkkf.mongodb.net:27017,ac-ukercew-shard-00-01.tsmkkkf.mongodb.net:27017,ac-ukercew-shard-00-02.tsmkkkf.mongodb.net:27017/firewatch_sim?ssl=true&replicaSet=atlas-72ptrb-shard-0&authSource=admin&retryWrites=true&w=majority';
-const DB_NAME = 'firewatch_sim';
+const MONGO_URI = process.env.MONGODB_URI;
+const DB_NAME = process.env.MONGODB_DB || 'firewatch_sim';
 
 let mongoClient = null;
 let db = null;
@@ -338,6 +359,10 @@ async function transmitBatch(mode) {
   }
   if (events.length > 0) {
     await database.collection('events').insertMany(events);
+    // Schedule Twilio Voice Call & SMS with a 5-second escalation delay
+    const firstEvent = events[0];
+    const hazardLabel = firstEvent.hazard === 'FF' ? 'Forest Fire' : firstEvent.hazard === 'GL' ? 'Gas Leak' : firstEvent.hazard === 'FL' ? 'Flash Flood' : 'Landslide';
+    scheduleEmergencyCall(hazardLabel, firstEvent.nodeId, 5000);
   }
 
   const timeStr = new Date().toLocaleTimeString('en-IN');
@@ -346,6 +371,122 @@ async function transmitBatch(mode) {
   if (logLines.length > 4) console.log(`   ...and ${logLines.length - 4} more active node packets.`);
 
   return { count: readings.length, logLines, timeStr };
+}
+
+let lastCallTimestamp = 0;
+const CALL_COOLDOWN_MS = 60000; // 60s cooldown to prevent repeated dials
+let pendingCallTimeout = null;
+let countdownInterval = null;
+
+function cancelPendingCall(reason = '') {
+  if (pendingCallTimeout) {
+    clearTimeout(pendingCallTimeout);
+    pendingCallTimeout = null;
+  }
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+    countdownInterval = null;
+  }
+  if (reason) {
+    console.log(`🚫 [DISPATCH CANCELLED] Emergency call aborted: ${reason}`);
+  }
+}
+
+function scheduleEmergencyCall(hazardName, nodeId, delayMs = 5000) {
+  const now = Date.now();
+  // If call already scheduled or recently made, do not schedule another
+  if (pendingCallTimeout) return;
+  if (now - lastCallTimestamp < CALL_COOLDOWN_MS) {
+    return;
+  }
+
+  const targetPhone = process.env.EMERGENCY_RECIPIENT_PHONE || '+918600596593';
+  let remainingSecs = Math.ceil(delayMs / 1000);
+
+  console.log(`\n🚨 [INCIDENT DETECTED] Critical ${hazardName} on Node ${nodeId}`);
+  console.log(`⏱️ [5s DELAY] Emergency voice call to ${targetPhone} will dial in ${remainingSecs} seconds...`);
+
+  countdownInterval = setInterval(() => {
+    remainingSecs--;
+    if (remainingSecs > 0) {
+      console.log(`⏳ Dialing ${targetPhone} in ${remainingSecs}s...`);
+    } else {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+      }
+    }
+  }, 1000);
+
+  pendingCallTimeout = setTimeout(() => {
+    pendingCallTimeout = null;
+    if (countdownInterval) {
+      clearInterval(countdownInterval);
+      countdownInterval = null;
+    }
+    dispatchTwilioEmergencyCall(hazardName, nodeId).catch(err => console.error('Call dispatch error:', err.message));
+  }, delayMs);
+}
+
+async function dispatchTwilioEmergencyCall(hazardName, nodeId, force = false) {
+  cancelPendingCall('');
+  const now = Date.now();
+  if (!force && (now - lastCallTimestamp < CALL_COOLDOWN_MS)) {
+    return;
+  }
+  lastCallTimestamp = now;
+  const twilioSid = process.env.TWILIO_ACCOUNT_SID;
+  const twilioAuth = process.env.TWILIO_AUTH_TOKEN;
+  const twilioFrom = process.env.TWILIO_PHONE_NUMBER || process.env.TWILIO_FROM_NUMBER;
+  const targetPhone = process.env.EMERGENCY_RECIPIENT_PHONE || '+918600596593';
+
+  console.log(`\n🚨 [AUTO-DISPATCH] CRITICAL DISASTER DETECTED: ${hazardName} on Node ${nodeId}`);
+  console.log(`📞 [DIALING EMERGENCY CARRIER CALL] ${twilioFrom} -> ${targetPhone}...`);
+
+  try {
+    const params = new URLSearchParams();
+    params.append('To', targetPhone);
+    params.append('From', twilioFrom);
+    params.append('Url', 'http://demo.twilio.com/docs/voice.xml');
+
+    const auth = Buffer.from(`${twilioSid}:${twilioAuth}`).toString('base64');
+    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Calls.json`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params.toString(),
+    });
+
+    const data = await res.json();
+    if (res.ok) {
+      console.log(`✅ [CALL CONNECTED & RINGING] Twilio SID: ${data.sid} | Status: ${data.status.toUpperCase()} -> PHONE RINGING!`);
+    } else {
+      console.log(`⚠️ [Twilio Voice Status] ${data.message || JSON.stringify(data)}`);
+    }
+  } catch (err) {
+    console.error(`❌ [Voice Call Error]:`, err.message);
+  }
+
+  // Also trigger SMS
+  try {
+    const smsParams = new URLSearchParams();
+    smsParams.append('To', targetPhone);
+    smsParams.append('From', twilioFrom);
+    smsParams.append('Body', `🚨 DISASTER WATCH EMERGENCY: Critical ${hazardName} detected by sensor node ${nodeId}. Response teams dispatched.`);
+
+    const auth = Buffer.from(`${twilioSid}:${twilioAuth}`).toString('base64');
+    await fetch(`https://api.twilio.com/2010-04-01/Accounts/${twilioSid}/Messages.json`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Basic ${auth}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: smsParams.toString(),
+    });
+    console.log(`📱 [SMS DISPATCHED] Emergency SMS queued for ${targetPhone}`);
+  } catch (e) {}
 }
 
 function isFG(id) {
@@ -358,6 +499,11 @@ function isFG(id) {
 function setMode(newMode) {
   currentMode = String(newMode).trim();
   const label = getModeLabel(currentMode);
+
+  if (currentMode === '0' || currentMode === '6') {
+    cancelPendingCall('Switched to Standby / Safe mode');
+  }
+
   console.log(`\n=========================================================`);
   console.log(`⚡ SWITCHED SIMULATOR TO: ${label}`);
   console.log(`=========================================================`);
@@ -395,9 +541,10 @@ Select which sensors / disaster mode to activate:
   [4] FLASH FLOOD SENSORS (Nodes 9, 10 - Soil Saturation 97%+ & Runoff)
   [5] LANDSLIDE SENSORS (Nodes 11, 12 - Seismic Tilt & Vibration Pulses)
   [6] SAFE ACTIVE TELEMETRY (All Nodes 1–12 - Baseline Safe Readings)
+  [c] 📞 CALL NOW: Trigger Emergency Phone Call to +91 8600596593 Immediately
   [0] RESET ALL TO STANDBY (Set All 12 Nodes to INACTIVE)
 ================================================================================
-👉 Type option (1, 2, 3, 4, 5, 6, 0) and press Enter:`);
+👉 Type option (1, 2, 3, 4, 5, 6, c, 0) and press Enter:`);
 }
 
 /**
@@ -413,11 +560,13 @@ function setupTerminalInput() {
   printMenu();
 
   rl.on('line', (line) => {
-    const input = line.trim();
-    if (['0', '1', '2', '3', '4', '5', '6'].includes(input) || input.includes(',')) {
+    const input = line.trim().toLowerCase();
+    if (input === 'c') {
+      dispatchTwilioEmergencyCall('Operator Emergency Alert', 'FF-NODE-01', true);
+    } else if (['0', '1', '2', '3', '4', '5', '6'].includes(input) || input.includes(',')) {
       setMode(input);
     } else {
-      console.log(`Invalid option: "${input}". Please enter 1, 2, 3, 4, 5, 6, or 0.`);
+      console.log(`Invalid option: "${input}". Please enter 1, 2, 3, 4, 5, 6, c, or 0.`);
     }
   });
 }

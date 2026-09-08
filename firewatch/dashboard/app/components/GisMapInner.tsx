@@ -111,49 +111,48 @@ export default function GisMapInner({
       const [lng, lat] = node.location.coordinates;
       const gwId = node.radio?.gatewayId;
       const gwCoords = gwMap[gwId];
+      const isNodeActive = node.status?.toLowerCase() === 'active';
+      const statusText = isNodeActive ? 'ACTIVE' : 'INACTIVE';
+      const statusColor = isNodeActive ? '#10b981' : '#94a3b8';
+      const riskLevel = node.latestReading?.risk?.level || 'NORMAL';
 
-      // Draw dashed radio hop line to its gateway
+      // Draw animated radio hop line to its gateway when active
       if (gwCoords) {
         const polyline = L.polyline([[lat, lng], gwCoords], {
           color: node.nodeType === 'FG' ? '#f97316' : '#38bdf8',
-          weight: 1.5,
-          opacity: 0.35,
-          dashArray: '4, 6',
+          weight: isNodeActive ? 2 : 1.5,
+          opacity: isNodeActive ? 0.8 : 0.25,
+          dashArray: isNodeActive ? '6, 8' : '4, 6',
+          className: isNodeActive ? 'lora-link-active' : '',
         });
         lg.addLayer(polyline);
       }
 
-      // Risk level & colors
-      const riskLevel = node.latestReading?.risk?.level || 'NORMAL';
-      const isNodeActive = node.status?.toLowerCase() === 'active';
-      const statusText = isNodeActive ? 'ACTIVE' : 'INACTIVE';
-      const statusColor = isNodeActive ? '#10b981' : '#94a3b8';
-
       let ringColor = 'border-emerald-500 bg-emerald-500/10 text-emerald-400';
-      let haloColor = 'rgba(16, 185, 129, 0.3)';
+      let haloColor = 'rgba(16, 185, 129, 0.4)';
 
       if (riskLevel === 'CRITICAL') {
         ringColor = 'border-red-500 bg-red-500/20 text-red-400';
-        haloColor = 'rgba(239, 68, 68, 0.5)';
+        haloColor = 'rgba(239, 68, 68, 0.6)';
       } else if (riskLevel === 'HIGH') {
         ringColor = 'border-orange-500 bg-orange-500/20 text-orange-400';
-        haloColor = 'rgba(249, 115, 22, 0.45)';
+        haloColor = 'rgba(249, 115, 22, 0.5)';
       } else if (riskLevel === 'WATCH') {
         ringColor = 'border-amber-400 bg-amber-400/20 text-amber-300';
-        haloColor = 'rgba(245, 158, 11, 0.4)';
+        haloColor = 'rgba(245, 158, 11, 0.45)';
       }
 
       const isSelected = selectedNode && selectedNode._id === node._id;
 
-      // Node marker DivIcon with active indicator
+      // Node marker DivIcon with active animated beacon
       const nodeIcon = L.divIcon({
         className: 'custom-node-marker',
         html: `
           <div class="relative flex items-center justify-center cursor-pointer">
             ${
-              riskLevel !== 'NORMAL'
-                ? `<div class="absolute -inset-3 rounded-full radar-dot" style="background-color: ${haloColor};"></div>`
-                : ''
+              isNodeActive
+                ? `<div class="absolute -inset-3.5 rounded-full ${riskLevel === 'CRITICAL' ? 'beacon-pulse-critical' : 'beacon-pulse-active'}" style="background-color: ${haloColor};"></div>`
+                : (riskLevel !== 'NORMAL' ? `<div class="absolute -inset-3 rounded-full radar-dot" style="background-color: ${haloColor};"></div>` : '')
             }
             <div class="h-7 w-7 rounded-lg border-2 ${ringColor} flex items-center justify-center bg-slate-950 shadow-md ${
           isSelected ? 'ring-2 ring-white scale-125' : ''
