@@ -23,9 +23,9 @@ export default function DashboardHome() {
   const [loading, setLoading] = useState(true);
 
   // Fetch all live network data
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (isInitial = false) => {
     try {
-      setLoading(true);
+      if (isInitial) setLoading(true);
       const [statsRes, nodesRes, gwRes, eventsRes] = await Promise.all([
         fetch('/api/network/stats'),
         fetch('/api/nodes'),
@@ -41,27 +41,30 @@ export default function DashboardHome() {
       if (statsJson.success) setStats(statsJson.data);
       if (nodesJson.success && Array.isArray(nodesJson.data)) {
         setNodes(nodesJson.data);
-        // Default selected node if none selected yet
-        if (!selectedNode && nodesJson.data.length > 0) {
-          // Select an active or critical node if available
-          const critNode = nodesJson.data.find(
-            (n: any) => n.latestReading?.risk?.level === 'CRITICAL' || n.latestReading?.risk?.level === 'HIGH'
-          );
-          setSelectedNode(critNode || nodesJson.data[0]);
-        }
+        // Ensure selectedNode is always kept up-to-date with fresh telemetry
+        setSelectedNode((prev: any) => {
+          if (!prev) {
+            const critNode = nodesJson.data.find(
+              (n: any) => n.latestReading?.risk?.level === 'CRITICAL' || n.latestReading?.risk?.level === 'HIGH'
+            );
+            return critNode || nodesJson.data[0];
+          }
+          const refreshed = nodesJson.data.find((n: any) => n._id === prev._id);
+          return refreshed || prev;
+        });
       }
       if (gwJson.success) setGateways(gwJson.data);
       if (eventsJson.success) setEvents(eventsJson.data);
     } catch (err) {
       console.error('Error fetching dashboard data:', err);
     } finally {
-      setLoading(false);
+      if (isInitial) setLoading(false);
     }
-  }, [selectedNode]);
+  }, []);
 
   useEffect(() => {
-    fetchData();
-    const interval = setInterval(fetchData, 15000); // 15s live refresh
+    fetchData(true);
+    const interval = setInterval(() => fetchData(false), 3000); // 3s fast live refresh
     return () => clearInterval(interval);
   }, [fetchData]);
 

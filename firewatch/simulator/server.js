@@ -1,19 +1,20 @@
 /**
  * Disaster Watch - Standalone Hardware Sensor & LoRa Packet Simulator Server
- * Automatically transmits live disaster telemetry packets to MongoDB on start.
+ * Interactive Terminal CLI with numbered sensor selection (1, 2, 3, 4, 5, 6, 0)
  * 
  * Run from terminal:
  *   node simulator/server.js
  *   or: npm run simulator
  * 
- * Web Controller & Buttons: http://localhost:4000
+ * Web Controller: http://localhost:4000
  */
 
 const http = require('http');
 const dns = require('dns');
+const readline = require('readline');
 const { MongoClient } = require('mongodb');
 
-// Ensure resilient DNS resolution for MongoDB Atlas across local routers/ISPs
+// Resilient DNS resolution for MongoDB Atlas
 try {
   dns.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4']);
 } catch (e) {}
@@ -25,10 +26,25 @@ const DB_NAME = 'firewatch_sim';
 
 let mongoClient = null;
 let db = null;
-let autoStreamInterval = 5000; // 5 seconds
-let autoStreamTimer = null;
-let isAutoStreaming = true; // Auto-streams by default as soon as server starts
+let streamTimer = null;
+let isStreaming = true;
+let currentMode = '1'; // Default: 1 (All sensors)
 let packetSequence = 5000;
+
+// Node ID mappings
+const NODE_GROUPS = {
+  'FF': ['FGMH26080001', 'FGMH26080002', 'FGMH26080003', 'FGMH26080004'],
+  'GL': ['FGMH26080005', 'FGMH26080006', 'FGMH26080007', 'FGMH26080008'],
+  'FL': ['FSMH26080009', 'FSMH2608000A'],
+  'LS': ['FSMH2608000B', 'FSMH2608000C'],
+};
+
+const ALL_NODE_IDS = [
+  ...NODE_GROUPS.FF,
+  ...NODE_GROUPS.GL,
+  ...NODE_GROUPS.FL,
+  ...NODE_GROUPS.LS,
+];
 
 async function getDb() {
   if (db && mongoClient) return db;
@@ -42,140 +58,95 @@ async function getDb() {
 }
 
 /**
- * Generate actual disaster sensor telemetry payload that makes sensors ACTIVE
- * Tailored to each hazard class (FF, GL, FL, LS)
+ * Generate actual dynamic disaster telemetry
  */
-function generateActualDisasterPayload(node, scenarioOverride = null) {
-  const isFG = node.nodeType === 'FG' || node._id.startsWith('FG');
+function generateSensorData(nodeId, hazardType) {
+  const isFG = nodeId.startsWith('FG');
   let v = {};
-  let risk = { level: 'CRITICAL', score: 0.92, rule: 'multi_hazard_active' };
-  let state = 'ALERT';
+  let risk = { level: 'NORMAL', score: 0.02, rule: 'baseline' };
+  let state = 'NORMAL';
   let injectedAnomaly = null;
-  let primaryHazard = 'FF';
 
-  // Determine hazard profile for the node
-  const num = parseInt(node._id.slice(-2), 16) || 1;
-  let scenario = scenarioOverride;
-
-  if (!scenario) {
-    if (isFG) {
-      // Half Forest Fire (1-4), half Gas Leak (5-8)
-      scenario = num <= 4 ? 'FF' : 'GL';
-    } else {
-      // Half Flash Flood (9-10), half Landslide (11-12)
-      scenario = num <= 10 ? 'FL' : 'LS';
-    }
-  }
-
-  if (scenario === 'FF') {
-    // 🔥 ACTUAL FOREST FIRE DISASTER TELEMETRY
-    primaryHazard = 'FF';
+  if (hazardType === 'FF') {
+    // 🔥 Forest Fire Disaster
     state = 'FIRE_ALERT';
     injectedAnomaly = 'thermal_smoke_plume';
     v = {
-      temp_c: parseFloat((56.5 + Math.random() * 14).toFixed(2)),  // 56.5°C - 70.5°C (Extreme heat!)
-      rh_pct: parseFloat((11.0 + Math.random() * 7).toFixed(2)),   // 11% - 18% (Severely dry RH)
-      pm25: parseFloat((260.0 + Math.random() * 150).toFixed(2)),  // 260 - 410 µg/m³ (Heavy particulate smoke)
-      mq4_ppm: parseFloat((2.8 + Math.random() * 1.6).toFixed(2)),
-      mq7_ppm: parseFloat((16.5 + Math.random() * 12).toFixed(2)),  // 16.5 - 28.5 ppm (High Carbon Monoxide plume)
-      mq135_ppm: parseFloat((8.5 + Math.random() * 6).toFixed(2)),  // High smoke air quality index
+      temp_c: parseFloat((56.0 + Math.random() * 16.0).toFixed(2)), // 56°C - 72°C
+      rh_pct: parseFloat((10.0 + Math.random() * 8.0).toFixed(2)),   // 10% - 18%
+      pm25: parseFloat((260.0 + Math.random() * 160.0).toFixed(2)), // 260 - 420 µg/m³
+      mq4_ppm: parseFloat((2.5 + Math.random() * 1.5).toFixed(2)),
+      mq7_ppm: parseFloat((15.0 + Math.random() * 14.0).toFixed(2)), // 15 - 29 ppm CO
+      mq135_ppm: parseFloat((8.0 + Math.random() * 6.0).toFixed(2)),
     };
     risk = {
       level: 'CRITICAL',
       score: parseFloat((0.92 + Math.random() * 0.07).toFixed(2)),
       rule: 'forest_fire_thermal_runaway',
     };
-  } else if (scenario === 'GL') {
-    // 💨 ACTUAL GAS LEAK DISASTER TELEMETRY
-    primaryHazard = 'GL';
+  } else if (hazardType === 'GL') {
+    // 💨 Gas Leak Disaster
     state = 'GAS_LEAK';
     injectedAnomaly = 'methane_plume';
     v = {
-      temp_c: parseFloat((29.0 + Math.random() * 4).toFixed(2)),
-      rh_pct: parseFloat((50.0 + Math.random() * 8).toFixed(2)),
-      pm25: parseFloat((35.0 + Math.random() * 15).toFixed(2)),
-      mq4_ppm: parseFloat((52.0 + Math.random() * 32).toFixed(2)),  // 52 - 84 ppm (Methane CH4 surge!)
-      mq7_ppm: parseFloat((4.5 + Math.random() * 3).toFixed(2)),
-      mq135_ppm: parseFloat((18.0 + Math.random() * 9).toFixed(2)), // Flammable gas index
+      temp_c: parseFloat((28.5 + Math.random() * 4.0).toFixed(2)),
+      rh_pct: parseFloat((52.0 + Math.random() * 8.0).toFixed(2)),
+      pm25: parseFloat((35.0 + Math.random() * 15.0).toFixed(2)),
+      mq4_ppm: parseFloat((52.0 + Math.random() * 30.0).toFixed(2)), // 52 - 82 ppm CH4!
+      mq7_ppm: parseFloat((4.0 + Math.random() * 3.0).toFixed(2)),
+      mq135_ppm: parseFloat((18.0 + Math.random() * 8.0).toFixed(2)),
     };
     risk = {
       level: 'CRITICAL',
       score: parseFloat((0.89 + Math.random() * 0.08).toFixed(2)),
       rule: 'methane_lel_threshold_exceeded',
     };
-  } else if (scenario === 'FL') {
-    // 🌊 ACTUAL FLASH FLOOD DISASTER TELEMETRY
-    primaryHazard = 'FL';
+  } else if (hazardType === 'FL') {
+    // 🌊 Flash Flood Disaster
     state = 'FLOOD_ALERT';
     injectedAnomaly = 'rapid_soil_saturation';
     v = {
-      soil_pct: parseFloat((96.5 + Math.random() * 3.2).toFixed(2)), // 96.5% - 99.7% (Waterlogged soil!)
+      soil_pct: parseFloat((96.0 + Math.random() * 3.8).toFixed(2)), // 96% - 99.8%
       vib_count: Math.floor(Math.random() * 3),
-      water_level_cm: parseFloat((175.0 + Math.random() * 45).toFixed(1)), // High surface runoff
+      water_level_cm: parseFloat((175.0 + Math.random() * 45.0).toFixed(1)),
     };
     risk = {
       level: 'CRITICAL',
       score: parseFloat((0.91 + Math.random() * 0.07).toFixed(2)),
       rule: 'flood_surface_runoff_surge',
     };
-  } else if (scenario === 'LS') {
-    // ⛰️ ACTUAL LANDSLIDE DISASTER TELEMETRY
-    primaryHazard = 'LS';
+  } else if (hazardType === 'LS') {
+    // ⛰️ Landslide Disaster
     state = 'LANDSLIDE_ALERT';
     injectedAnomaly = 'seismic_slope_shear';
     v = {
-      soil_pct: parseFloat((86.0 + Math.random() * 10).toFixed(2)),
-      vib_count: Math.floor(25 + Math.random() * 18),               // 25 - 43 pulses/min (Geophone tremor!)
-      tilt_deg: parseFloat((16.5 + Math.random() * 6).toFixed(1)),  // Slope shift angle
+      soil_pct: parseFloat((86.0 + Math.random() * 10.0).toFixed(2)),
+      vib_count: Math.floor(25 + Math.random() * 18),               // 25 - 43 pulses/min!
+      tilt_deg: parseFloat((16.0 + Math.random() * 6.0).toFixed(1)),
     };
     risk = {
       level: 'CRITICAL',
       score: parseFloat((0.94 + Math.random() * 0.05).toFixed(2)),
       rule: 'slope_displacement_geophone_trigger',
     };
-  } else if (scenario === 'NORMAL') {
-    // Safe baseline active telemetry
-    primaryHazard = isFG ? 'FF' : 'FL';
-    state = 'NORMAL';
+  } else {
+    // 🟢 Safe Normal Active Telemetry
     if (isFG) {
       v = {
-        temp_c: parseFloat((26.0 + Math.random() * 3).toFixed(2)),
-        rh_pct: parseFloat((55.0 + Math.random() * 8).toFixed(2)),
-        pm25: parseFloat((22.0 + Math.random() * 10).toFixed(2)),
+        temp_c: parseFloat((25.5 + Math.random() * 3.5).toFixed(2)),
+        rh_pct: parseFloat((54.0 + Math.random() * 8.0).toFixed(2)),
+        pm25: parseFloat((20.0 + Math.random() * 10.0).toFixed(2)),
         mq4_ppm: parseFloat((1.4 + Math.random() * 0.5).toFixed(2)),
         mq7_ppm: parseFloat((0.9 + Math.random() * 0.3).toFixed(2)),
         mq135_ppm: parseFloat((0.8 + Math.random() * 0.3).toFixed(2)),
       };
     } else {
       v = {
-        soil_pct: parseFloat((42.0 + Math.random() * 8).toFixed(2)),
+        soil_pct: parseFloat((40.0 + Math.random() * 8.0).toFixed(2)),
         vib_count: Math.floor(Math.random() * 2),
       };
     }
     risk = { level: 'NORMAL', score: 0.02, rule: 'baseline' };
-  } else {
-    // Random variations
-    primaryHazard = isFG ? 'FF' : 'FL';
-    state = 'NORMAL';
-    const isSpike = Math.random() < 0.25;
-    if (isFG) {
-      v = {
-        temp_c: parseFloat((25 + Math.random() * (isSpike ? 24 : 8)).toFixed(2)),
-        rh_pct: parseFloat((45 + Math.random() * 25).toFixed(2)),
-        pm25: parseFloat((20 + Math.random() * (isSpike ? 120 : 20)).toFixed(2)),
-        mq4_ppm: parseFloat((1.2 + Math.random() * (isSpike ? 15 : 1)).toFixed(2)),
-        mq7_ppm: parseFloat((0.8 + Math.random() * (isSpike ? 8 : 0.8)).toFixed(2)),
-        mq135_ppm: parseFloat((0.8 + Math.random() * 2).toFixed(2)),
-      };
-    } else {
-      v = {
-        soil_pct: parseFloat((38 + Math.random() * (isSpike ? 55 : 18)).toFixed(2)),
-        vib_count: isSpike ? Math.floor(8 + Math.random() * 12) : Math.floor(Math.random() * 2),
-      };
-    }
-    risk = isSpike
-      ? { level: 'HIGH', score: 0.78, rule: 'ambient_spike_warning' }
-      : { level: 'NORMAL', score: 0.05, rule: 'baseline' };
   }
 
   const now = new Date();
@@ -184,24 +155,24 @@ function generateActualDisasterPayload(node, scenarioOverride = null) {
   const readingDoc = {
     ts: now,
     meta: {
-      gatewayId: node.radio?.gatewayId || 'GW-MH-01',
-      hazards: node.hazards || (isFG ? ['FF', 'GL'] : ['FL', 'LS']),
-      nodeId: node._id,
+      gatewayId: 'GW-MH-01',
+      hazards: isFG ? ['FF', 'GL'] : ['FL', 'LS'],
+      nodeId,
       nodeType: isFG ? 'FG' : 'FS',
-      region: node.region || 'MH',
+      region: 'MH',
     },
     synthetic: true,
     link: {
-      rxAt: new Date(now.getTime() + 120),
-      latency_ms: Math.floor(1200 + Math.random() * 600),
-      rssi: Math.floor(-70 - Math.random() * 15),
+      rxAt: new Date(now.getTime() + 110),
+      latency_ms: Math.floor(1100 + Math.random() * 500),
+      rssi: Math.floor(-68 - Math.random() * 15),
       seq: packetSequence,
       retries: 0,
     },
     adc: isFG
       ? { mq4: 480, mq7: 410, mq135: 530, pm25: 620 }
       : { sm: 1850, vib: v.vib_count || 0 },
-    sdRef: `${now.toISOString().slice(0, 10)}/${node._id}_sim.csv`,
+    sdRef: `${now.toISOString().slice(0, 10)}/${nodeId}_live.csv`,
     q: {
       flags: risk.level === 'CRITICAL' ? ['DISASTER_THRESHOLD_EXCEEDED'] : [],
       kurt: { temp_c: -0.3, rh_pct: -0.2, pm25: 0.1 },
@@ -215,36 +186,102 @@ function generateActualDisasterPayload(node, scenarioOverride = null) {
     risk,
   };
 
-  return { readingDoc, risk, primaryHazard, scenario, now };
+  return { readingDoc, risk, now };
 }
 
 /**
- * Transmit active disaster sensor readings to MongoDB
+ * Determine which active nodes and hazards to transmit based on mode
  */
-async function transmitActiveTelemetry(options = {}) {
-  const { nodeId = 'ALL', scenario = null, silent = false } = options;
-  const database = await getDb();
-  let targetNodes = [];
+function getActivePlan(mode) {
+  const cleanMode = String(mode).trim();
+  const plan = [];
 
-  if (nodeId && nodeId !== 'ALL') {
-    const node = await database.collection('nodes').findOne({ _id: nodeId });
-    if (!node) return { error: `Node ${nodeId} not found` };
-    targetNodes = [node];
-  } else {
-    targetNodes = await database.collection('nodes').find({}).toArray();
+  if (cleanMode === '0') {
+    // Reset / Standby
+    return { plan: [], isReset: true, label: 'STANDBY (All Nodes INACTIVE)' };
   }
 
-  const readingsToInsert = [];
-  const eventsToInsert = [];
-  const summaryLog = [];
+  if (cleanMode === '2' || cleanMode.includes('2')) {
+    // Forest Fire Nodes
+    NODE_GROUPS.FF.forEach(id => plan.push({ id, hazard: 'FF', label: 'Forest Fire' }));
+  }
+  if (cleanMode === '3' || cleanMode.includes('3')) {
+    // Gas Leak Nodes
+    NODE_GROUPS.GL.forEach(id => plan.push({ id, hazard: 'GL', label: 'Gas Leak' }));
+  }
+  if (cleanMode === '4' || cleanMode.includes('4')) {
+    // Flash Flood Nodes
+    NODE_GROUPS.FL.forEach(id => plan.push({ id, hazard: 'FL', label: 'Flash Flood' }));
+  }
+  if (cleanMode === '5' || cleanMode.includes('5')) {
+    // Landslide Nodes
+    NODE_GROUPS.LS.forEach(id => plan.push({ id, hazard: 'LS', label: 'Landslide' }));
+  }
+  if (cleanMode === '6') {
+    // Safe Active Telemetry across all
+    ALL_NODE_IDS.forEach(id => plan.push({ id, hazard: 'NORMAL', label: 'Safe Active Telemetry' }));
+  }
 
-  for (const node of targetNodes) {
-    const { readingDoc, risk, primaryHazard, scenario: chosenScenario, now } = generateActualDisasterPayload(node, scenario);
-    readingsToInsert.push(readingDoc);
+  // Default option 1: Full multi-hazard active network
+  if (cleanMode === '1' || plan.length === 0) {
+    NODE_GROUPS.FF.forEach(id => plan.push({ id, hazard: 'FF', label: 'Forest Fire' }));
+    NODE_GROUPS.GL.forEach(id => plan.push({ id, hazard: 'GL', label: 'Gas Leak' }));
+    NODE_GROUPS.FL.forEach(id => plan.push({ id, hazard: 'FL', label: 'Flash Flood' }));
+    NODE_GROUPS.LS.forEach(id => plan.push({ id, hazard: 'LS', label: 'Landslide' }));
+  }
 
-    // Update Node: Status = 'active', lastSeen = now, latestReading = readingDoc
+  return { plan, isReset: false, label: getModeLabel(cleanMode) };
+}
+
+function getModeLabel(m) {
+  switch (String(m).trim()) {
+    case '1': return '1: ALL 12 SENSORS ACTIVE (Multi-Hazard Disaster Stream)';
+    case '2': return '2: FOREST FIRE SENSORS ACTIVE (Nodes 1, 2, 3, 4)';
+    case '3': return '3: GAS LEAK SENSORS ACTIVE (Nodes 5, 6, 7, 8)';
+    case '4': return '4: FLASH FLOOD SENSORS ACTIVE (Nodes 9, 10)';
+    case '5': return '5: LANDSLIDE SENSORS ACTIVE (Nodes 11, 12)';
+    case '6': return '6: SAFE ACTIVE TELEMETRY (All 12 Nodes Baseline)';
+    case '0': return '0: RESET ALL TO STANDBY (INACTIVE)';
+    default: return `Custom Mode: ${m}`;
+  }
+}
+
+/**
+ * Transmit one batch of packets to MongoDB
+ */
+async function transmitBatch(mode) {
+  const { plan, isReset } = getActivePlan(mode);
+  const database = await getDb();
+
+  if (isReset) {
+    await database.collection('nodes').updateMany({}, {
+      $set: { status: 'inactive', lastSeen: new Date() }
+    });
+    return { count: 0, reset: true };
+  }
+
+  const activeIds = plan.map(p => p.id);
+  const inactiveIds = ALL_NODE_IDS.filter(id => !activeIds.includes(id));
+
+  // Set non-participating nodes to inactive standby
+  if (inactiveIds.length > 0) {
+    await database.collection('nodes').updateMany(
+      { _id: { $in: inactiveIds } },
+      { $set: { status: 'inactive', lastSeen: new Date() } }
+    );
+  }
+
+  const readings = [];
+  const events = [];
+  const logLines = [];
+
+  for (const item of plan) {
+    const { readingDoc, risk, now } = generateSensorData(item.id, item.hazard);
+    readings.push(readingDoc);
+
+    // Update node status to ACTIVE
     await database.collection('nodes').updateOne(
-      { _id: node._id },
+      { _id: item.id },
       {
         $set: {
           status: 'active',
@@ -254,102 +291,138 @@ async function transmitActiveTelemetry(options = {}) {
       }
     );
 
-    // If disaster threshold is breached, record in `events` collection
-    if (risk.level === 'CRITICAL' || risk.level === 'HIGH') {
+    // Create event for critical hazard
+    if (risk.level === 'CRITICAL') {
       const eventDoc = {
         eventId: `EV-${Date.now().toString(36).toUpperCase()}-${Math.floor(Math.random() * 1000)}`,
         ts: now,
-        nodeId: node._id,
-        hazard: primaryHazard,
+        nodeId: item.id,
+        hazard: item.hazard,
         level: risk.level,
         score: risk.score,
         state: 'NEW',
-        summary: `DISASTER SIMULATED: ${risk.level} ${primaryHazard === 'FF' ? 'Forest Fire' : primaryHazard === 'GL' ? 'Gas Leak' : primaryHazard === 'FL' ? 'Flash Flood' : 'Landslide'} on node ${node._id}`,
+        summary: `DISASTER SIMULATED: ${item.label} on node ${item.id}`,
         readings: [now.toISOString()],
         actionHistory: [
           {
             action: 'TRIGGERED',
             ts: now,
-            by: 'Hardware Sensor Simulator Server',
-            note: `Live sensor stream packet injected: ${risk.rule}`,
+            by: 'Hardware Sensor Simulator',
+            note: `Live disaster telemetry packet: ${risk.rule}`,
           }
         ],
       };
-      eventsToInsert.push(eventDoc);
+      events.push(eventDoc);
     }
 
-    // Format console output
-    const vStr = Object.entries(readingDoc.v).map(([k, val]) => `${k}:${val}`).slice(0, 3).join(' | ');
-    summaryLog.push(`[Node ${node._id}] ${chosenScenario} -> ${vStr} | STATUS: ACTIVE (${risk.level})`);
+    // Format readable telemetry values for log
+    const v = readingDoc.v;
+    let readingSummary = '';
+    if (item.hazard === 'FF') {
+      readingSummary = `Temp: ${v.temp_c}°C | PM2.5: ${v.pm25} µg/m³ | CO: ${v.mq7_ppm} ppm`;
+    } else if (item.hazard === 'GL') {
+      readingSummary = `CH4: ${v.mq4_ppm} ppm | MQ-135: ${v.mq135_ppm} ppm`;
+    } else if (item.hazard === 'FL') {
+      readingSummary = `Soil Saturation: ${v.soil_pct}% | Runoff: ${v.water_level_cm} cm`;
+    } else if (item.hazard === 'LS') {
+      readingSummary = `Vibration: ${v.vib_count} count/min | Tilt: ${v.tilt_deg}°`;
+    } else {
+      readingSummary = isFG(item.id) ? `Temp: ${v.temp_c}°C | PM2.5: ${v.pm25}` : `Soil: ${v.soil_pct}%`;
+    }
+
+    logLines.push(`[${item.id}] [${item.hazard}] ${readingSummary} -> ACTIVE (${risk.level})`);
   }
 
-  if (readingsToInsert.length > 0) {
-    await database.collection('readings').insertMany(readingsToInsert);
+  if (readings.length > 0) {
+    await database.collection('readings').insertMany(readings);
   }
-  if (eventsToInsert.length > 0) {
-    await database.collection('events').insertMany(eventsToInsert);
+  if (events.length > 0) {
+    await database.collection('events').insertMany(events);
   }
 
   const timeStr = new Date().toLocaleTimeString('en-IN');
-  if (!silent) {
-    console.log(`\n📡 [${timeStr}] Transmitted ${readingsToInsert.length} active sensor packet(s) to MongoDB:`);
-    summaryLog.slice(0, 4).forEach(line => console.log(`   ${line}`));
-    if (summaryLog.length > 4) console.log(`   ...and ${summaryLog.length - 4} more active nodes.`);
-    if (eventsToInsert.length > 0) {
-      console.log(`   ⚠️ Created ${eventsToInsert.length} critical disaster incident(s) in events collection.`);
-    }
-  }
+  console.log(`📡 [${timeStr}] Transmitted ${readings.length} active sensor packet(s) to MongoDB:`);
+  logLines.slice(0, 4).forEach(l => console.log(`   ${l}`));
+  if (logLines.length > 4) console.log(`   ...and ${logLines.length - 4} more active node packets.`);
 
-  return {
-    success: true,
-    nodesTransmitted: targetNodes.length,
-    eventsTriggered: eventsToInsert.length,
-    timestamp: timeStr,
-    summaryLog,
-  };
+  return { count: readings.length, logLines, timeStr };
+}
+
+function isFG(id) {
+  return id.startsWith('FG');
 }
 
 /**
- * Reset all nodes to standby
+ * Switch transmission mode
  */
-async function resetAllNodes() {
-  const database = await getDb();
-  await database.collection('nodes').updateMany({}, {
-    $set: {
-      status: 'inactive',
-      lastSeen: new Date(),
+function setMode(newMode) {
+  currentMode = String(newMode).trim();
+  const label = getModeLabel(currentMode);
+  console.log(`\n=========================================================`);
+  console.log(`⚡ SWITCHED SIMULATOR TO: ${label}`);
+  console.log(`=========================================================`);
+
+  // Immediate transmission on mode change
+  transmitBatch(currentMode).catch(err => console.error('Transmit error:', err.message));
+}
+
+/**
+ * Background auto-stream loop (every 3.5s)
+ */
+function startStreaming() {
+  if (streamTimer) clearInterval(streamTimer);
+  isStreaming = true;
+  
+  // Transmit initial batch immediately
+  transmitBatch(currentMode).catch(err => console.error('Initial transmit error:', err.message));
+
+  streamTimer = setInterval(() => {
+    if (isStreaming && currentMode !== '0') {
+      transmitBatch(currentMode).catch(err => console.error('Stream tick error:', err.message));
+    }
+  }, 3500); // 3.5 seconds fast updates for live dashboard
+}
+
+function printMenu() {
+  console.log(`
+================================================================================
+📡 DISASTER WATCH • SENSOR HARDWARE SIMULATOR
+================================================================================
+Select which sensors / disaster mode to activate:
+  [1] ALL 12 SENSORS ACTIVE (Multi-Hazard Continuous Disaster Stream)
+  [2] FOREST FIRE SENSORS (Nodes 1, 2, 3, 4 - Heat 58°C+ & PM2.5 Smoke)
+  [3] GAS LEAK SENSORS (Nodes 5, 6, 7, 8 - Methane CH4 55+ ppm Spike)
+  [4] FLASH FLOOD SENSORS (Nodes 9, 10 - Soil Saturation 97%+ & Runoff)
+  [5] LANDSLIDE SENSORS (Nodes 11, 12 - Seismic Tilt & Vibration Pulses)
+  [6] SAFE ACTIVE TELEMETRY (All Nodes 1–12 - Baseline Safe Readings)
+  [0] RESET ALL TO STANDBY (Set All 12 Nodes to INACTIVE)
+================================================================================
+👉 Type option (1, 2, 3, 4, 5, 6, 0) and press Enter:`);
+}
+
+/**
+ * Setup terminal interactive input
+ */
+function setupTerminalInput() {
+  const rl = readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+    terminal: false,
+  });
+
+  printMenu();
+
+  rl.on('line', (line) => {
+    const input = line.trim();
+    if (['0', '1', '2', '3', '4', '5', '6'].includes(input) || input.includes(',')) {
+      setMode(input);
+    } else {
+      console.log(`Invalid option: "${input}". Please enter 1, 2, 3, 4, 5, 6, or 0.`);
     }
   });
-  console.log(`🔄 [Simulator] All 12 nodes reset to INACTIVE (STANDBY awaiting packets).`);
-  return { success: true, message: 'All nodes reset to INACTIVE (Standby).' };
 }
 
-/**
- * Start background auto-stream loop
- */
-function startAutoStream() {
-  if (autoStreamTimer) clearInterval(autoStreamTimer);
-  isAutoStreaming = true;
-  console.log(`\n🚀 [Simulator] Live telemetry auto-stream loop ACTIVE (every ${autoStreamInterval / 1000}s)...`);
-  
-  // Transmit immediate first packet batch
-  transmitActiveTelemetry({ nodeId: 'ALL', scenario: null });
-
-  autoStreamTimer = setInterval(() => {
-    transmitActiveTelemetry({ nodeId: 'ALL', scenario: null, silent: false }).catch(err => {
-      console.error('[Simulator Stream Error]:', err.message);
-    });
-  }, autoStreamInterval);
-}
-
-function stopAutoStream() {
-  if (autoStreamTimer) clearInterval(autoStreamTimer);
-  autoStreamTimer = null;
-  isAutoStreaming = false;
-  console.log(`⏸️ [Simulator] Live telemetry auto-stream loop PAUSED.`);
-}
-
-// Embedded Web Application HTML with Buttons
+// Embedded Web Controller HTML with 1, 2, 3, 4, 5, 6, 0 Buttons
 const HTML_PAGE = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -358,322 +431,155 @@ const HTML_PAGE = `<!DOCTYPE html>
   <title>Disaster Watch - Hardware Sensor Simulator</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700;800&family=Outfit:wght@400;600;700;800&display=swap" rel="stylesheet">
   <style>
-    :root {
-      --bg: #070b14;
-      --card-bg: rgba(13, 20, 36, 0.85);
-      --border: rgba(30, 41, 59, 0.8);
-      --cyan: #06b6d4;
-      --emerald: #10b981;
-      --amber: #f59e0b;
-      --rose: #f43f5e;
-      --purple: #a855f7;
-    }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      background-color: var(--bg);
-      color: #e2e8f0;
-      font-family: 'Outfit', sans-serif;
-      min-height: 100vh;
-      display: flex;
-      flex-direction: column;
-      background-image: 
-        radial-gradient(circle at 10% 20%, rgba(6, 182, 212, 0.08) 0%, transparent 40%),
-        radial-gradient(circle at 90% 80%, rgba(244, 63, 94, 0.08) 0%, transparent 40%);
+      background: #070b14; color: #e2e8f0; font-family: 'Outfit', sans-serif;
+      min-height: 100vh; padding: 24px;
+      background-image: radial-gradient(circle at 15% 15%, rgba(6, 182, 212, 0.1) 0%, transparent 40%),
+                        radial-gradient(circle at 85% 85%, rgba(244, 63, 94, 0.1) 0%, transparent 40%);
     }
-    header {
-      padding: 16px 28px;
-      border-bottom: 1px solid var(--border);
-      background: rgba(7, 11, 20, 0.9);
-      backdrop-filter: blur(12px);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+    .header {
+      display: flex; justify-content: space-between; align-items: center;
+      border-bottom: 1px solid #1e293b; padding-bottom: 16px; margin-bottom: 24px;
     }
     .brand { display: flex; align-items: center; gap: 12px; }
     .brand-icon {
-      width: 38px; height: 38px; border-radius: 10px;
-      background: linear-gradient(135deg, rgba(6, 182, 212, 0.25), rgba(16, 185, 129, 0.25));
-      border: 1px solid rgba(6, 182, 212, 0.5);
-      display: flex; align-items: center; justify-content: center; font-size: 20px;
+      width: 40px; height: 40px; border-radius: 10px; background: rgba(6,182,212,0.2);
+      border: 1px solid rgba(6,182,212,0.4); display: flex; align-items: center;
+      justify-content: center; font-size: 22px;
     }
-    .brand h1 { font-size: 17px; font-weight: 700; color: #ffffff; letter-spacing: 0.5px; }
-    .brand p { font-size: 11px; font-family: 'JetBrains Mono', monospace; color: #94a3b8; }
-    main {
-      flex: 1; padding: 24px 28px; max-width: 1440px; width: 100%; margin: 0 auto;
-      display: grid; grid-template-columns: 1fr 400px; gap: 24px;
+    .title { font-size: 18px; font-weight: 700; color: #fff; }
+    .sub { font-size: 11px; font-family: 'JetBrains Mono'; color: #94a3b8; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .btn {
+      padding: 20px 16px; border-radius: 14px; font-family: 'JetBrains Mono';
+      font-size: 13px; font-weight: 700; cursor: pointer; border: 1px solid;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 8px; transition: all 0.2s; text-align: center;
     }
-    @media (max-width: 1024px) { main { grid-template-columns: 1fr; } }
-    .card {
-      background: var(--card-bg); border: 1px solid var(--border);
-      border-radius: 16px; padding: 20px; backdrop-filter: blur(16px);
-      box-shadow: 0 10px 30px rgba(0,0,0,0.3); margin-bottom: 20px;
-    }
-    .card-title {
-      font-size: 13px; font-weight: 700; letter-spacing: 0.5px;
-      text-transform: uppercase; font-family: 'JetBrains Mono', monospace;
-      color: #ffffff; display: flex; align-items: center; justify-content: space-between;
-      margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 10px;
-    }
-    .btn-grid {
-      display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 16px;
-    }
-    @media (max-width: 768px) { .btn-grid { grid-template-columns: 1fr; } }
-    .action-btn {
-      padding: 16px 12px; border-radius: 12px;
-      font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700;
-      cursor: pointer; display: flex; flex-direction: column; align-items: center;
-      justify-content: center; gap: 6px; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-      border: 1px solid; text-align: center;
-    }
-    .action-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(0,0,0,0.4); }
-    .action-btn:active { transform: translateY(0); }
-    .btn-normal { background: rgba(16, 185, 129, 0.15); border-color: rgba(16, 185, 129, 0.5); color: #34d399; }
-    .btn-normal:hover { background: rgba(16, 185, 129, 0.3); border-color: #10b981; }
-    .btn-fire { background: rgba(244, 63, 94, 0.15); border-color: rgba(244, 63, 94, 0.5); color: #fb7185; }
-    .btn-fire:hover { background: rgba(244, 63, 94, 0.3); border-color: #f43f5e; }
-    .btn-gas { background: rgba(245, 158, 11, 0.15); border-color: rgba(245, 158, 11, 0.5); color: #fbbf24; }
-    .btn-gas:hover { background: rgba(245, 158, 11, 0.3); border-color: #f59e0b; }
-    .btn-flood { background: rgba(56, 189, 248, 0.15); border-color: rgba(56, 189, 248, 0.5); color: #38bdf8; }
-    .btn-flood:hover { background: rgba(56, 189, 248, 0.3); border-color: #38bdf8; }
-    .btn-landslide { background: rgba(168, 85, 247, 0.15); border-color: rgba(168, 85, 247, 0.5); color: #c084fc; }
-    .btn-landslide:hover { background: rgba(168, 85, 247, 0.3); border-color: #a855f7; }
-    .btn-random { background: rgba(6, 182, 212, 0.15); border-color: rgba(6, 182, 212, 0.5); color: #22d3ee; }
-    .btn-random:hover { background: rgba(6, 182, 212, 0.3); border-color: #06b6d4; }
+    .btn:hover { transform: translateY(-3px); box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+    .btn-all { background: rgba(6,182,212,0.15); border-color: #06b6d4; color: #22d3ee; }
+    .btn-fire { background: rgba(244,63,94,0.15); border-color: #f43f5e; color: #fb7185; }
+    .btn-gas { background: rgba(245,158,11,0.15); border-color: #f59e0b; color: #fbbf24; }
+    .btn-flood { background: rgba(56,189,248,0.15); border-color: #38bdf8; color: #38bdf8; }
+    .btn-landslide { background: rgba(168,85,247,0.15); border-color: #a855f7; color: #c084fc; }
+    .btn-safe { background: rgba(16,185,129,0.15); border-color: #10b981; color: #34d399; }
     .btn-reset {
-      background: rgba(148, 163, 184, 0.08); border-color: rgba(148, 163, 184, 0.3);
-      color: #94a3b8; width: 100%; padding: 12px; border-radius: 10px; cursor: pointer;
-      font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 600;
+      background: rgba(148,163,184,0.1); border-color: #64748b; color: #94a3b8;
+      width: 100%; padding: 14px; border-radius: 12px; font-family: 'JetBrains Mono';
+      font-weight: 700; cursor: pointer;
     }
-    .btn-reset:hover { background: rgba(148, 163, 184, 0.18); color: #ffffff; }
-    .stream-panel {
-      display: flex; align-items: center; justify-content: space-between;
-      background: rgba(15, 23, 42, 0.8); border: 1px solid var(--border);
-      padding: 14px 18px; border-radius: 12px; margin-bottom: 20px;
+    .btn-reset:hover { background: rgba(148,163,184,0.2); color: #fff; }
+    .log-card {
+      background: rgba(13,20,36,0.8); border: 1px solid #1e293b; border-radius: 14px;
+      padding: 16px; margin-top: 24px;
     }
-    .toggle-btn {
-      background: #10b981; color: #022c22; font-family: 'JetBrains Mono', monospace;
-      font-size: 13px; font-weight: 800; padding: 10px 18px; border-radius: 10px;
-      border: none; cursor: pointer; display: flex; align-items: center; gap: 8px;
+    .log-box {
+      background: #040711; border: 1px solid #1e293b; border-radius: 10px;
+      height: 320px; overflow-y: auto; padding: 12px; font-family: 'JetBrains Mono';
+      font-size: 11px; display: flex; flex-direction: column; gap: 6px;
     }
-    .toggle-btn.paused { background: #dc2626; color: white; }
-    .select-input {
-      background: #090d16; border: 1px solid #334155; color: #f8fafc;
-      padding: 8px 12px; border-radius: 8px; font-family: 'JetBrains Mono', monospace; font-size: 12px;
-    }
-    .console-box {
-      background: #040711; border: 1px solid #1e293b; border-radius: 12px;
-      height: 520px; overflow-y: auto; padding: 12px; font-family: 'JetBrains Mono', monospace;
-      font-size: 11px; display: flex; flex-direction: column; gap: 8px;
-    }
-    .log-entry {
-      padding: 8px 10px; border-radius: 8px; border-left: 3px solid #10b981;
-      background: rgba(15, 23, 42, 0.6); line-height: 1.4;
-    }
-    .pulse-dot {
-      display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-      background: #10b981; margin-right: 6px; animation: pulse 1.4s infinite;
-    }
-    @keyframes pulse {
-      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
-      70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
-      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
-    }
+    .log-row { padding: 6px 10px; background: rgba(15,23,42,0.6); border-radius: 6px; }
   </style>
 </head>
 <body>
-  <header>
+  <div class="header">
     <div class="brand">
       <div class="brand-icon">📡</div>
       <div>
-        <h1>DISASTER WATCH • SENSOR HARDWARE SIMULATOR</h1>
-        <p>Standalone Background LoRa Transmission Server • Port 4000</p>
+        <div class="title">DISASTER WATCH • SENSOR CONTROLLER</div>
+        <div class="sub">Select 1, 2, 3, 4, 5 to activate specific hazard sensors</div>
       </div>
     </div>
-    <div style="display:flex; align-items:center; gap:16px; font-family:'JetBrains Mono'; font-size:12px;">
-      <div style="color:#10b981; display:flex; align-items:center;">
-        <span class="pulse-dot"></span> STREAMING TO ATLAS
-      </div>
+    <div style="font-family:'JetBrains Mono'; font-size:12px; color:#10b981;">
+      ● LIVE STREAMING TO MONGODB (3.5s)
     </div>
-  </header>
+  </div>
 
-  <main>
-    <div>
-      <!-- Continuous Stream Status -->
-      <div class="stream-panel">
-        <div style="display:flex; align-items:center; gap:14px;">
-          <button id="streamBtn" class="toggle-btn" onclick="toggleStream()">
-            ● AUTO-STREAMING (ACTIVE)
-          </button>
-          <span id="streamText" style="font-family:'JetBrains Mono'; font-size:12px; color:#10b981;">
-            Streaming live disaster packets every 5s...
-          </span>
-        </div>
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span style="font-family:'JetBrains Mono'; font-size:11px; color:#94a3b8;">NODE TARGET:</span>
-          <select id="nodeSelect" class="select-input">
-            <option value="ALL">All 12 Nodes (Broadcast)</option>
-            <option value="FGMH26080001">FGMH26080001 (Forest Fire)</option>
-            <option value="FGMH26080002">FGMH26080002 (Forest Fire)</option>
-            <option value="FGMH26080005">FGMH26080005 (Gas Leak)</option>
-            <option value="FGMH26080006">FGMH26080006 (Gas Leak)</option>
-            <option value="FSMH26080009">FSMH26080009 (Flash Flood)</option>
-            <option value="FSMH2608000B">FSMH2608000B (Landslide)</option>
-          </select>
-        </div>
-      </div>
+  <div class="grid">
+    <button class="btn btn-all" onclick="selectMode('1')">
+      <span style="font-size:24px;">🌟</span>
+      <span>[1] ACTIVATE ALL 12 SENSORS</span>
+      <span style="font-size:10px; opacity:0.8;">Full Multi-Hazard Disaster Grid</span>
+    </button>
 
-      <!-- Quick Action Buttons -->
-      <div class="card">
-        <div class="card-title">
-          <span>⚡ Manual Telemetry Push Buttons</span>
-          <span style="font-size:11px; color:#94a3b8; font-weight:normal;">Click any button to inject packet</span>
-        </div>
+    <button class="btn btn-fire" onclick="selectMode('2')">
+      <span style="font-size:24px;">🔥</span>
+      <span>[2] FOREST FIRE SENSORS</span>
+      <span style="font-size:10px; opacity:0.8;">Nodes 1–4 (Heat 58°C+, PM2.5 Smoke)</span>
+    </button>
 
-        <div class="btn-grid">
-          <button class="action-btn btn-fire" onclick="pushScenario('FF')">
-            <span style="font-size:22px;">🔥</span>
-            <span>Push Forest Fire (FF)</span>
-            <span style="font-size:10px; opacity:0.8;">Temp >58°C, PM2.5 >280</span>
-          </button>
+    <button class="btn btn-gas" onclick="selectMode('3')">
+      <span style="font-size:24px;">💨</span>
+      <span>[3] GAS LEAK SENSORS</span>
+      <span style="font-size:10px; opacity:0.8;">Nodes 5–8 (Methane CH4 55+ ppm)</span>
+    </button>
 
-          <button class="action-btn btn-gas" onclick="pushScenario('GL')">
-            <span style="font-size:22px;">💨</span>
-            <span>Push Gas Leak (GL)</span>
-            <span style="font-size:10px; opacity:0.8;">MQ-4 CH4 >55 ppm Spike</span>
-          </button>
+    <button class="btn btn-flood" onclick="selectMode('4')">
+      <span style="font-size:24px;">🌊</span>
+      <span>[4] FLASH FLOOD SENSORS</span>
+      <span style="font-size:10px; opacity:0.8;">Nodes 9–10 (Soil Saturation 97%+)</span>
+    </button>
 
-          <button class="action-btn btn-flood" onclick="pushScenario('FL')">
-            <span style="font-size:22px;">🌊</span>
-            <span>Push Flash Flood (FL)</span>
-            <span style="font-size:10px; opacity:0.8;">Soil Moisture >97%</span>
-          </button>
+    <button class="btn btn-landslide" onclick="selectMode('5')">
+      <span style="font-size:24px;">⛰️</span>
+      <span>[5] LANDSLIDE SENSORS</span>
+      <span style="font-size:10px; opacity:0.8;">Nodes 11–12 (Seismic Tilt & Vibration)</span>
+    </button>
 
-          <button class="action-btn btn-landslide" onclick="pushScenario('LS')">
-            <span style="font-size:22px;">⛰️</span>
-            <span>Push Landslide (LS)</span>
-            <span style="font-size:10px; opacity:0.8;">Vibration Pulse >30 count</span>
-          </button>
+    <button class="btn btn-safe" onclick="selectMode('6')">
+      <span style="font-size:24px;">🟢</span>
+      <span>[6] SAFE BASELINE SENSORS</span>
+      <span style="font-size:10px; opacity:0.8;">Nodes 1–12 (Active Safe Telemetry)</span>
+    </button>
+  </div>
 
-          <button class="action-btn btn-random" onclick="pushScenario('RANDOM')">
-            <span style="font-size:22px;">🎲</span>
-            <span>Push Random Burst</span>
-            <span style="font-size:10px; opacity:0.8;">Active Multi-Sensor Packets</span>
-          </button>
+  <button class="btn-reset" onclick="selectMode('0')">
+    🔄 [0] RESET ALL NODES TO STANDBY (INACTIVE)
+  </button>
 
-          <button class="action-btn btn-normal" onclick="pushScenario('NORMAL')">
-            <span style="font-size:22px;">🟢</span>
-            <span>Push Safe Baseline</span>
-            <span style="font-size:10px; opacity:0.8;">Active Normal Readings</span>
-          </button>
-        </div>
-
-        <button class="btn-reset" onclick="resetNodes()">
-          🔄 Reset All Nodes to Standby (INACTIVE)
-        </button>
-      </div>
+  <div class="log-card">
+    <div style="font-family:'JetBrains Mono'; font-size:12px; font-weight:700; margin-bottom:10px; color:#94a3b8;">
+      📟 TRANSMITTED PACKET STREAM (COMMITTED TO MONGODB)
     </div>
-
-    <!-- Live Transmission Terminal -->
-    <div>
-      <div class="card" style="height:calc(100% - 20px); display:flex; flex-direction:column;">
-        <div class="card-title">
-          <span>📟 Outgoing LoRa Telemetry Log</span>
-          <button onclick="clearConsole()" style="background:transparent; border:none; color:#64748b; font-family:'JetBrains Mono'; font-size:11px; cursor:pointer;">
-            Clear
-          </button>
-        </div>
-        <div class="console-box" id="consoleLog">
-          <div class="log-entry">
-            <span style="color:#10b981;">[AUTO-BOOT]</span> Simulator initialized. Auto-streaming active disaster packets into MongoDB.
-          </div>
-        </div>
-      </div>
+    <div class="log-box" id="logBox">
+      <div class="log-row" style="color:#10b981;">[BOOT] Simulator active. Transmitting dynamic sensor packets to MongoDB every 3.5s.</div>
     </div>
-  </main>
+  </div>
 
   <script>
-    let isStreaming = true;
-
-    async function pushScenario(scenario) {
-      const nodeId = document.getElementById('nodeSelect').value;
+    async function selectMode(mode) {
       try {
-        const res = await fetch('/api/push', {
+        const res = await fetch('/api/mode', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ nodeId, scenario })
+          body: JSON.stringify({ mode })
         });
         const data = await res.json();
-        if (data.success) {
-          log('Push [' + scenario + ']: ' + data.nodesTransmitted + ' node(s) updated to ACTIVE');
-        }
+        addLog('Switched Mode to [' + mode + ']: ' + data.label);
       } catch (e) {
-        log('Error: ' + e.message);
+        addLog('Error: ' + e.message);
       }
     }
 
-    async function resetNodes() {
-      try {
-        const res = await fetch('/api/reset', { method: 'POST' });
-        const data = await res.json();
-        log('All nodes reset to INACTIVE (STANDBY)');
-      } catch (e) {
-        log('Error: ' + e.message);
-      }
-    }
-
-    async function toggleStream() {
-      const btn = document.getElementById('streamBtn');
-      const text = document.getElementById('streamText');
-      try {
-        const res = await fetch('/api/stream/toggle', { method: 'POST' });
-        const data = await res.json();
-        isStreaming = data.isAutoStreaming;
-        if (isStreaming) {
-          btn.innerText = '● AUTO-STREAMING (ACTIVE)';
-          btn.classList.remove('paused');
-          text.innerText = 'Streaming live disaster packets every 5s...';
-          text.style.color = '#10b981';
-          log('Auto-stream loop RESUMED');
-        } else {
-          btn.innerText = '▶ START STREAM';
-          btn.classList.add('paused');
-          text.innerText = 'Auto-stream loop PAUSED';
-          text.style.color = '#94a3b8';
-          log('Auto-stream loop PAUSED');
-        }
-      } catch (e) {
-        log('Error: ' + e.message);
-      }
-    }
-
-    function log(msg) {
-      const box = document.getElementById('consoleLog');
-      const entry = document.createElement('div');
-      entry.className = 'log-entry';
+    function addLog(msg) {
+      const box = document.getElementById('logBox');
+      const row = document.createElement('div');
+      row.className = 'log-row';
       const time = new Date().toLocaleTimeString('en-IN');
-      entry.innerHTML = '<span style="color:#64748b;">[' + time + ']</span> ' + msg;
-      box.insertBefore(entry, box.firstChild);
-      if (box.children.length > 40) box.removeChild(box.lastChild);
+      row.innerHTML = '<span style="color:#64748b;">[' + time + ']</span> ' + msg;
+      box.insertBefore(row, box.firstChild);
+      if (box.children.length > 50) box.removeChild(box.lastChild);
     }
-
-    function clearConsole() {
-      document.getElementById('consoleLog').innerHTML = '';
-    }
-
-    // Auto-poll status
-    setInterval(async () => {
-      if (isStreaming) {
-        log('Auto-stream packet batch committed to MongoDB');
-      }
-    }, 5000);
   </script>
 </body>
 </html>
 `;
 
-// HTTP Server
+// HTTP Server for web controller and API
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -694,16 +600,17 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 2. Manual Push API
-  if (url.pathname === '/api/push' && req.method === 'POST') {
+  // 2. Select Mode API
+  if (url.pathname === '/api/mode' && req.method === 'POST') {
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', async () => {
       try {
         const parsed = JSON.parse(body || '{}');
-        const result = await transmitActiveTelemetry(parsed);
+        const mode = parsed.mode || '1';
+        setMode(mode);
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ success: true, ...result }));
+        res.end(JSON.stringify({ success: true, mode, label: getModeLabel(mode) }));
       } catch (e) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: false, error: e.message }));
@@ -712,28 +619,18 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // 3. Reset Nodes API
-  if (url.pathname === '/api/reset' && req.method === 'POST') {
+  // 3. Status API
+  if (url.pathname === '/api/status' && req.method === 'GET') {
     try {
-      const result = await resetAllNodes();
+      const database = await getDb();
+      const active = await database.collection('nodes').countDocuments({ status: 'active' });
+      const inactive = await database.collection('nodes').countDocuments({ status: 'inactive' });
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify(result));
+      res.end(JSON.stringify({ active, inactive, currentMode, label: getModeLabel(currentMode) }));
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: false, error: e.message }));
+      res.end(JSON.stringify({ error: e.message }));
     }
-    return;
-  }
-
-  // 4. Toggle Stream API
-  if (url.pathname === '/api/stream/toggle' && req.method === 'POST') {
-    if (isAutoStreaming) {
-      stopAutoStream();
-    } else {
-      startAutoStream();
-    }
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ success: true, isAutoStreaming }));
     return;
   }
 
@@ -742,17 +639,13 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, async () => {
-  console.log(`=================================================================`);
-  console.log(`📡 Disaster Watch - Hardware Sensor & LoRa Packet Simulator Server`);
-  console.log(`🚀 Simulator Server running on: http://localhost:${PORT}`);
-  console.log(`📊 Live Monitoring Dashboard:  http://localhost:3050`);
-  console.log(`⚡ Mode: AUTO-STREAMING DISASTER TELEMETRY TO MONGODB`);
-  console.log(`=================================================================`);
   try {
     await getDb();
     console.log(`[Simulator] Connected to MongoDB Atlas.`);
-    // Automatically start streaming active disaster telemetry
-    startAutoStream();
+    // Start streaming active telemetry immediately
+    startStreaming();
+    // Start terminal interactive CLI menu
+    setupTerminalInput();
   } catch (err) {
     console.error('[Simulator] MongoDB Connection Error:', err.message);
   }
