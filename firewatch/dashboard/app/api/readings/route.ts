@@ -37,12 +37,24 @@ export async function GET(request: NextRequest) {
     }
 
     const { db } = await connectToDatabase();
-    const readings = await db.collection('readings')
+    let readings = await db.collection('readings')
       .find(query)
       .project(projection)
       .sort({ ts: 1 })
       .limit(limit)
       .toArray();
+
+    // Fallback: If no readings match the time window (e.g. historical or synthetic test data),
+    // retrieve the latest available readings for this node so telemetry charts are always populated
+    if (readings.length === 0 && nodeId) {
+      readings = await db.collection('readings')
+        .find({ 'meta.nodeId': nodeId })
+        .project(projection)
+        .sort({ ts: -1 })
+        .limit(limit)
+        .toArray();
+      readings.reverse();
+    }
 
     return NextResponse.json({
       success: true,

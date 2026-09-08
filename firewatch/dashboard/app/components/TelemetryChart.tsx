@@ -49,7 +49,8 @@ export default function TelemetryChart({ selectedNode }: TelemetryChartProps) {
 
   if (!selectedNode) return null;
 
-  const isFG = selectedNode.nodeType === 'FG';
+  const nodeType = selectedNode?.nodeType?.toUpperCase() || (selectedNode?._id?.startsWith('FG') ? 'FG' : 'FS');
+  const isFG = nodeType === 'FG';
 
   return (
     <div className="glass-panel rounded-2xl p-5 border border-slate-800">
@@ -97,12 +98,12 @@ export default function TelemetryChart({ selectedNode }: TelemetryChartProps) {
           <div className="h-full w-full flex items-center justify-center font-mono text-xs text-slate-500">
             No readings recorded for this window.
           </div>
-        ) : (
+        ) : isFG ? (
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={readings} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+            <LineChart data={readings} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
               <XAxis dataKey="time" stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} />
-              <YAxis stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} />
+              <YAxis stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} width={35} />
               <Tooltip
                 contentStyle={{
                   backgroundColor: '#090d16',
@@ -113,22 +114,32 @@ export default function TelemetryChart({ selectedNode }: TelemetryChartProps) {
                 }}
               />
               <Legend wrapperStyle={{ fontFamily: 'monospace', fontSize: '11px', paddingTop: '10px' }} />
-
-              {isFG ? (
-                <>
-                  <Line type="monotone" dataKey="temp" name="Temp (°C)" stroke="#f97316" dot={false} strokeWidth={2} />
-                  <Line type="monotone" dataKey="humidity" name="RH (%)" stroke="#38bdf8" dot={false} strokeWidth={1.5} />
-                  <Line type="monotone" dataKey="pm25" name="PM2.5" stroke="#eab308" dot={false} strokeWidth={1.5} />
-                  <Line type="monotone" dataKey="ch4" name="CH4 (ppm)" stroke="#ef4444" dot={false} strokeWidth={2} />
-                  <Line type="monotone" dataKey="riskScore" name="Risk %" stroke="#a855f7" strokeDasharray="4 4" dot={false} strokeWidth={1.5} />
-                </>
-              ) : (
-                <>
-                  <Line type="monotone" dataKey="soil" name="Soil Saturation (%)" stroke="#38bdf8" dot={false} strokeWidth={2} />
-                  <Line type="monotone" dataKey="vib" name="Vibration Triggers" stroke="#f59e0b" dot={false} strokeWidth={1.5} />
-                  <Line type="monotone" dataKey="riskScore" name="Risk %" stroke="#ef4444" strokeDasharray="4 4" dot={false} strokeWidth={2} />
-                </>
-              )}
+              <Line type="monotone" dataKey="temp" name="Temp (°C)" stroke="#f97316" dot={false} strokeWidth={2} />
+              <Line type="monotone" dataKey="humidity" name="RH (%)" stroke="#38bdf8" dot={false} strokeWidth={1.5} />
+              <Line type="monotone" dataKey="pm25" name="PM2.5 (µg/m³)" stroke="#eab308" dot={false} strokeWidth={1.5} />
+              <Line type="monotone" dataKey="ch4" name="CH4 (ppm)" stroke="#ef4444" dot={false} strokeWidth={2} />
+              <Line type="monotone" dataKey="riskScore" name="Risk %" stroke="#a855f7" strokeDasharray="4 4" dot={false} strokeWidth={1.5} />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={readings} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+              <XAxis dataKey="time" stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} />
+              <YAxis stroke="#64748b" tick={{ fontSize: 10, fill: '#64748b' }} width={35} />
+              <Tooltip
+                contentStyle={{
+                  backgroundColor: '#090d16',
+                  borderColor: '#334155',
+                  borderRadius: '10px',
+                  fontFamily: 'monospace',
+                  fontSize: '11px',
+                }}
+              />
+              <Legend wrapperStyle={{ fontFamily: 'monospace', fontSize: '11px', paddingTop: '10px' }} />
+              <Line type="monotone" dataKey="soil" name="Soil Saturation (%)" stroke="#38bdf8" dot={false} strokeWidth={2} />
+              <Line type="monotone" dataKey="vib" name="Vibration Triggers" stroke="#f59e0b" dot={false} strokeWidth={1.5} />
+              <Line type="monotone" dataKey="riskScore" name="Risk %" stroke="#ef4444" strokeDasharray="4 4" dot={false} strokeWidth={2} />
             </LineChart>
           </ResponsiveContainer>
         )}
