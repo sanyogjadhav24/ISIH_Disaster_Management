@@ -19,12 +19,12 @@ WARP_WIDTH, WARP_HEIGHT = 1920, 1080
 MAP_FILE = "forest_map.p"
 COUNTRIES_FILE = "forest.p"
 HTML_OUTPUT_FILE = os.path.join(os.path.dirname(__file__), "location_output.html")
-ALERT_PHONE_NUMBER = "+917559183891"
+ALERT_PHONE_NUMBER = ""
 SMS_COOLDOWN_SECONDS = 300
 
-TWILIO_ACCOUNT_SID = "ACdbef51319cd287f72d54458ff121441d"
-TWILIO_AUTH_TOKEN = "12813d13dd8be7abc9cd209e08cee182"
-TWILIO_FROM_NUMBER = "+16812902695"
+TWILIO_ACCOUNT_SID = ""
+TWILIO_AUTH_TOKEN = ""
+TWILIO_FROM_NUMBER = "+"
 
 # -------------------- LOAD DATA --------------------
 with open(MAP_FILE, "rb") as f:

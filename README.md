@@ -300,32 +300,4 @@ We welcome contributions! Please follow these guidelines:
 
 ---
 
-## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-## Team & Contact
-
-**Project Lead**: TESSERACT Team
-
-For questions, suggestions, or bug reports:
-- Open an issue on GitHub
-- Contact: support@firewatch.dev
-- Documentation: https://firewatch-docs.dev
-
----
-
-## Acknowledgments
-
-- Forest research institutions for domain expertise
-- IoT community for mesh network insights
-- ML researchers for fire detection algorithms
-- Open-source communities (Three.js, TensorFlow, etc.)
-
----
-
-**Protecting forests. Saving lives. Building resilience.**
-
-🌍 *FIREWATCH: Hear the forest's whispers before they become screams.*
