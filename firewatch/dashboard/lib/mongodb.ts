@@ -1,4 +1,12 @@
 import { MongoClient, Db } from 'mongodb';
+import dns from 'dns';
+
+// Ensure resilient DNS resolution for MongoDB Atlas SRV lookups across local ISPs
+try {
+  dns.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4']);
+} catch {
+  // Graceful fallback
+}
 
 const uri = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017';
 const dbName = process.env.MONGODB_DB || 'firewatch_sim';
