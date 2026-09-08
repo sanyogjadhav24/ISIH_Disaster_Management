@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
           const form = new URLSearchParams();
           form.append('To', targetPhone);
           form.append('From', twilioFrom || '+17372212163');
-          form.append('Url', 'https://webhooks.twilio.com/v1/Voice/Template/voice_speech_recognition');
+          form.append('Url', 'http://demo.twilio.com/docs/voice.xml');
 
           const twilioRes = await fetch(twilioUrl, {
             method: 'POST',
